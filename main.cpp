@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <chrono>
 #include "cache.hpp"
 #include "bus.hpp"
 
@@ -117,6 +118,7 @@ int main(int argc, char* argv[]) {
         cout << "\n===== SIMULATION START =====\n";
     }
 
+    auto start_time = chrono::high_resolution_clock::now();
     while (true) {
         bool done = true;
         for (int c = 0; c < 4; c++) {
@@ -641,6 +643,9 @@ int main(int argc, char* argv[]) {
         global_cycle++;
     }
 
+    auto end_time = chrono::high_resolution_clock::now();
+    chrono::duration<double> elapsed = end_time - start_time;
+
     if (debug_mode) {
         cout << "\n===== SIMULATION COMPLETED =====\n";
         cout << "Total cycles: " << global_cycle << endl;
@@ -693,6 +698,7 @@ int main(int argc, char* argv[]) {
     *out << "Overall Bus Summary:\n";
     *out << "Total Bus Transactions: " << total_bus_tx << "\n";
     *out << "Total Bus Traffic (Bytes): " << total_bus_traffic << "\n";
+    *out << "Simulation Run Time (seconds): " << fixed << setprecision(6) << elapsed.count() << "\n";
 
     return 0;
 }
