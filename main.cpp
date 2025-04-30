@@ -19,6 +19,7 @@ struct Stats {
     unsigned long long execution_cycles = 0, idle = 0;
     unsigned long long misses = 0, evictions = 0, writebacks = 0;
     unsigned long long invalidations = 0, traffic = 0;
+    unsigned long long bus_transactions = 0;
     bool waiting_for_own_request = false;
 };
 
@@ -175,6 +176,8 @@ int main(int argc, char* argv[]) {
                             {c, set, idx, true, M, tag, C.use_counter++, global_cycle + 1, STATE_TRANSITION});
                     } else if (C.sets[set][idx].state == S) {
                         if (bus.free_at(global_cycle)) {
+                            st[c].bus_transactions++;
+                            bus.occupy(global_cycle, 1);
                             bool invalidated_others = false;
                             
                             for (int o = 0; o < 4; o++) {
@@ -378,6 +381,7 @@ int main(int argc, char* argv[]) {
                 
                 bus.occupy(global_cycle, total_bus_cycles);
                 stall_until[c] = bus.busy_until;
+                st[c].bus_transactions++;
             }
         }
 
@@ -435,7 +439,7 @@ int main(int argc, char* argv[]) {
         *out << "Writebacks: " << st[c].writebacks << "\n";
         *out << "Bus Invalidations: " << st[c].invalidations << "\n";
         *out << "Data Traffic (Bytes): " << st[c].traffic << "\n\n";
-        total_bus_tx += st[c].invalidations;
+        total_bus_tx += st[c].bus_transactions;
         total_bus_traffic += st[c].traffic;
     }
 
