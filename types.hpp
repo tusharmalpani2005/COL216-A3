@@ -41,7 +41,7 @@ struct PlannedChange {
     unsigned int tag;
     unsigned long long last_used;
     unsigned long long apply_cycle;
-    ChangeType type;  // New field to differentiate changes
+    ChangeType type;
 };
 
 #endif

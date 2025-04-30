@@ -107,8 +107,6 @@ int main(int argc, char* argv[]) {
             }
         }
         if (done && pending_allocations.empty() && planned_changes.empty()) break;
-
-        // First, apply any changes scheduled for this cycle
         vector<PlannedChange> next_planned_changes;
         for (auto& pc : planned_changes) {
             if (pc.apply_cycle <= global_cycle) {
@@ -134,7 +132,6 @@ int main(int argc, char* argv[]) {
         }
         planned_changes = next_planned_changes;
 
-        // Process pending allocations
         auto now_pending = std::move(pending_allocations);
         pending_allocations.clear();
         for (auto& pa : now_pending) {
@@ -149,7 +146,6 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Process memory references for each core
         for (int c = 0; c < 4; c++) {
             if (refq[c].empty()) continue;
             if (global_cycle < stall_until[c]) {
@@ -194,7 +190,6 @@ int main(int argc, char* argv[]) {
                                 st[c].invalidations++;
                             }
                             
-                            // Set this core's line to M state in the next cycle
                             planned_changes.push_back({c, set, idx, true, M, tag, C.use_counter++, global_cycle + 1, STATE_TRANSITION});
                         } else {
                             stall_until[c] = bus.busy_until;
@@ -246,13 +241,11 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 
-                // Now check planned changes to see if any core is about to update this block
                 for (const auto& pc : planned_changes) {
                     if (pc.apply_cycle > global_cycle && pc.core != c && 
                         pc.set == set && pc.tag == tag && pc.valid && pc.state != I) {
                         found_shared = true;
                         
-                        // Check if this core already has the block (to avoid duplicates)
                         bool already_counted = false;
                         for (const auto& other : other_copies) {
                             if (other.first == pc.core && other.second == pc.idx) {
@@ -309,7 +302,6 @@ int main(int argc, char* argv[]) {
                             int o = other.first;
                             int oi = other.second;
                             
-                            // Skip if this line is already scheduled for invalidation
                             bool skip = false;
                             for (const auto& pc : planned_changes) {
                                 if (pc.core == o && pc.set == set && pc.idx == oi && pc.state == I) {
@@ -320,18 +312,14 @@ int main(int argc, char* argv[]) {
                             
                             if (skip) continue;
                             
-                            // Handle data transfer from the first valid core
                             if (!data_transferred && cache[o].sets[set][oi].state != I) {
-                                st[o].traffic += (1u << b);  // Data transfer traffic
+                                st[o].traffic += (1u << b);
                                 
-                                // Check if providing core has M state and handle writeback
                                 if (cache[o].sets[set][oi].state == M) {
-                                    st[o].traffic += (1u << b);  // Additional writeback traffic
+                                    st[o].traffic += (1u << b);
                                     
-                                    // Stall providing core for cache-to-cache transfer + writeback to memory
                                     stall_requests.push_back({o, global_cycle + 2 * block_words + 100});
                                 } else {
-                                    // For non-modified states, just stall for the transfer time
                                     stall_requests.push_back({o, global_cycle + 2 * block_words});
                                 }
                                 
@@ -347,7 +335,7 @@ int main(int argc, char* argv[]) {
                         data_transfer_cycles = 2 * block_words;
                     } else {
                         new_state = State::E;
-                        data_transfer_cycles = 101;  // 100 cycles for memory access + 1 cycle for state transition
+                        data_transfer_cycles = 101;
                         st[c].traffic += (1u << b);
                     }
                 }
@@ -371,7 +359,7 @@ int main(int argc, char* argv[]) {
                         needs_writeback = true;
                         st[c].writebacks++;
                         st[c].traffic += (1u << b);
-                        total_bus_cycles += 100; // Additional 100 cycles for writeback
+                        total_bus_cycles += 100;
                     }
                     if (C.sets[set][v].state != I)
                         st[c].evictions++;
