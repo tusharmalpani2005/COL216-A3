@@ -109,6 +109,7 @@ int main(int argc, char* argv[]) {
     uint64_t global_cycle = 0;
     vector<PendingAllocation> pending_allocations;
     vector<PlannedChange> planned_changes;
+    vector<StallRequest> stall_requests;
 
     auto get_set = [&](uint32_t addr) { return (addr >> b) & ((1u << s) - 1); };
     auto get_tag = [&](uint32_t addr) { return addr >> (s + b); };
@@ -157,7 +158,6 @@ int main(int argc, char* argv[]) {
             cout << "Planned changes: " << planned_changes.size() << endl;
         }
 
-        // First, apply any changes scheduled for this cycle
         // First, apply any changes scheduled for this cycle
         vector<PlannedChange> next_planned_changes;
         for (auto& pc : planned_changes) {
@@ -435,7 +435,7 @@ int main(int argc, char* argv[]) {
                     if (debug_mode) {
                         cout << "Processing WRITE MISS" << endl;
                     }
-                    new_state = State::E;  // Corrected: Write miss goes directly to M state
+                    new_state = State::M; 
                     
                     if (found_mod) {
                         if (debug_mode) {
@@ -454,7 +454,7 @@ int main(int argc, char* argv[]) {
                                     cout << "Core " << o << " writes back modified data (" 
                                          << (1u << b) << " bytes)" << endl;
                                     cout << "Will invalidate copy in Core " << o << endl;
-                                    cout << "Adding stall request for Core " << o << " until cycle " << (global_cycle + 101)<< endl;
+                                    cout << "Adding stall request for Core " << o << " until cycle " << (global_cycle + 101) << endl;
                                 }
                                 st[o].traffic += (1u << b);
                             } else if (debug_mode) {
@@ -497,12 +497,49 @@ int main(int argc, char* argv[]) {
                             int o = other.first;
                             int oi = other.second;
                             
-                            if (!data_transferred) {
+                            // Skip if this line is already scheduled for invalidation
+                            bool skip = false;
+                            for (const auto& pc : planned_changes) {
+                                if (pc.core == o && pc.set == set && pc.idx == oi && pc.state == I) {
+                                    skip = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (skip) continue;
+                            
+                            // Handle data transfer from the first valid core
+                            if (!data_transferred && cache[o].sets[set][oi].state != I) {
                                 if (debug_mode) {
                                     cout << "Core " << o << " provides data (" 
                                          << (1u << b) << " bytes)" << endl;
                                 }
-                                st[o].traffic += (1u << b);
+                                
+                                st[o].traffic += (1u << b);  // Data transfer traffic
+                                
+                                // Check if providing core has M state and handle writeback
+                                if (cache[o].sets[set][oi].state == M) {
+                                    st[o].traffic += (1u << b);  // Additional writeback traffic
+                                    
+                                    // Stall providing core for cache-to-cache transfer + writeback to memory
+                                    stall_requests.push_back({o, global_cycle + 2 * block_words + 100});
+                                    
+                                    if (debug_mode) {
+                                        cout << "Core " << o << " has modified data, must write back to memory" << endl;
+                                        cout << "Additional writeback traffic: " << (1u << b) << " bytes" << endl;
+                                        cout << "Core " << o << " stalled for " << (2 * block_words + 100) 
+                                             << " cycles (transfer + writeback)" << endl;
+                                    }
+                                } else {
+                                    // For non-modified states, just stall for the transfer time
+                                    stall_requests.push_back({o, global_cycle + 2 * block_words});
+                                    
+                                    if (debug_mode) {
+                                        cout << "Core " << o << " stalled for " << (2 * block_words) 
+                                             << " cycles (transfer only)" << endl;
+                                    }
+                                }
+                                
                                 data_transferred = true;
                             }
                             
@@ -512,37 +549,20 @@ int main(int argc, char* argv[]) {
                                      << " to S (if not already)" << endl;
                             }
                             
-                            // Skip applying S state if the core is already pending invalidation
-                            bool skip = false;
-                            for (const auto& pc : planned_changes) {
-                                if (pc.core == o && pc.set == set && pc.idx == oi && pc.state == I) {
-                                    skip = true;
-                                    break;
-                                }
-                            }
-                            
-                            if (!skip) {
-                                // Add stall for other core providing data
-                                if (!data_transferred && cache[o].sets[set][oi].state != I) {
-                                    stall_requests.push_back({o, global_cycle + 2 * block_words});
-                                    if (debug_mode) {
-                                        cout << "Adding stall request for Core " << o << " until cycle " 
-                                             << (global_cycle + 2 * block_words) << endl;
-                                    }
-                                    data_transferred = true;
-                                }
-                                
-                                planned_changes.push_back(
-                                    {o, set, oi, true, S,
-                                     cache[o].sets[set][oi].tag,
-                                     cache[o].sets[set][oi].last_used,
-                                     global_cycle + 1, STATE_TRANSITION});
-                            }
-                            
+                            planned_changes.push_back(
+                                {o, set, oi, true, S,
+                                 cache[o].sets[set][oi].tag,
+                                 cache[o].sets[set][oi].last_used,
+                                 global_cycle + 1, STATE_TRANSITION});
                         }
+                        
+                        // Update data_transfer_cycles for the receiving core
+                        // In MESI protocol, read miss with shared copy only takes 2N cycles
+                        // (We don't wait for writeback to complete)
+                        data_transfer_cycles = 2 * block_words;
                     } else {
                         new_state = State::E;
-                        data_transfer_cycles = 101;
+                        data_transfer_cycles = 101;  // 100 cycles for memory access + 1 cycle for state transition
                         st[c].traffic += (1u << b);
                         if (debug_mode) {
                             cout << "No valid copy found, fetching from memory" << endl;
@@ -693,6 +713,6 @@ int main(int argc, char* argv[]) {
     *out << "Total Bus Transactions: " << total_bus_tx << "\n";
     *out << "Total Bus Traffic (Bytes): " << total_bus_traffic << "\n";
     *out << "Simulation Run Time (seconds): " << fixed << setprecision(6) << elapsed.count() << "\n";
-
+    *out << "Total Cycles: " << global_cycle << "\n";
     return 0;
 }
