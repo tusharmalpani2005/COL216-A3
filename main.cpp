@@ -39,9 +39,8 @@ string format_addr(uint32_t addr, int s, int b) {
 int main(int argc, char* argv[]) {
     vector<string> traces(4);
     string pref;
-    int s = 0, E = 0, b = 0;
+    int s = 5, E = 2, b = 5;
     string outfn;
-    bool debug_mode = false;  // Flag for detailed debugging
 
     for (int i = 1; i < argc; i++) {
         string a = argv[i];
@@ -55,8 +54,6 @@ int main(int argc, char* argv[]) {
             b = stoi(argv[++i]);
         else if (a == "-o" && i + 1 < argc)
             outfn = argv[++i];
-        else if (a == "-d")
-            debug_mode = true;
         else if (a == "-h") {
             cout << "-t <tracefile>: name of parallel application\n";
             cout << "-s <s>: number of set index bits\n";
@@ -67,16 +64,6 @@ int main(int argc, char* argv[]) {
             cout << "-h: prints this help\n";
             return 0;
         }
-    }
-
-    if (debug_mode) {
-        cout << "===== SIMULATION SETUP =====\n";
-        cout << "Trace prefix: " << pref << "\n";
-        cout << "Set index bits (s): " << s << "\n";
-        cout << "Associativity (E): " << E << "\n";
-        cout << "Block bits (b): " << b << "\n";
-        cout << "Output file: " << (outfn.empty() ? "stdout" : outfn) << "\n";
-        cout << "===========================\n\n";
     }
 
     for (int i = 0; i < 4; i++) {
@@ -96,10 +83,6 @@ int main(int argc, char* argv[]) {
             uint32_t a = stoul(addr, nullptr, 0);
             refq[c].push_back({t, a});
         }
-
-        if (debug_mode) {
-            cout << "Core " << c << " loaded " << refq[c].size() << " memory references\n";
-        }
     }
 
     vector<Cache> cache(4, Cache(s, E, b));
@@ -115,10 +98,6 @@ int main(int argc, char* argv[]) {
     auto get_tag = [&](uint32_t addr) { return addr >> (s + b); };
     auto block_words = (1u << b) / 4u;
 
-    if (debug_mode) {
-        cout << "\n===== SIMULATION START =====\n";
-    }
-
     auto start_time = chrono::high_resolution_clock::now();
     while (true) {
         bool done = true;
@@ -130,46 +109,12 @@ int main(int argc, char* argv[]) {
         }
         if (done && pending_allocations.empty() && planned_changes.empty()) break;
 
-        if (debug_mode) {
-            cout << "\n==== CYCLE " << global_cycle << " ====\n";
-            
-            // Debug stall status
-            cout << "Stall status: ";
-            for (int c = 0; c < 4; c++) {
-                cout << "Core " << c << ":" << (global_cycle < stall_until[c] ? "STALLED" : "ACTIVE");
-                if (global_cycle < stall_until[c]) {
-                    cout << " until " << stall_until[c];
-                }
-                cout << " | ";
-            }
-            cout << endl;
-            
-            // Debug bus status
-            cout << "Bus status: ";
-            if (bus.free_at(global_cycle)) {
-                cout << "FREE";
-            } else {
-                cout << "BUSY until " << bus.busy_until;
-            }
-            cout << endl;
-            
-            // Debug pending allocations count
-            cout << "Pending allocations: " << pending_allocations.size() << endl;
-            cout << "Planned changes: " << planned_changes.size() << endl;
-        }
-
         // First, apply any changes scheduled for this cycle
         vector<PlannedChange> next_planned_changes;
         for (auto& pc : planned_changes) {
             if (pc.apply_cycle <= global_cycle) {
                 if (pc.type == STATE_TRANSITION) {
                     Cache& C = cache[pc.core];
-                    if (debug_mode) {
-                        cout << "APPLYING STATE TRANSITION: Core " << pc.core 
-                            << " Set " << pc.set << " Line " << pc.idx 
-                            << " State " << StateNames.at(C.sets[pc.set][pc.idx].state)
-                            << " -> " << StateNames.at(pc.state) << endl;
-                    }
                     C.sets[pc.set][pc.idx].valid = pc.valid;
                     C.sets[pc.set][pc.idx].state = pc.state;
                     C.sets[pc.set][pc.idx].tag = pc.tag;
@@ -182,12 +127,6 @@ int main(int argc, char* argv[]) {
         for (auto& pc : planned_changes) {
             if (pc.apply_cycle <= global_cycle && pc.type == INVALIDATION) {
                 Cache& C = cache[pc.core];
-                if (debug_mode) {
-                    cout << "APPLYING INVALIDATION: Core " << pc.core 
-                        << " Set " << pc.set << " Line " << pc.idx 
-                        << " State " << StateNames.at(C.sets[pc.set][pc.idx].state)
-                        << " -> I" << endl;
-                }
                 //C.sets[pc.set][pc.idx].valid = pc.valid;
                 C.sets[pc.set][pc.idx].state = pc.state;
                 // C.sets[pc.set][pc.idx].tag = pc.tag;
@@ -201,35 +140,12 @@ int main(int argc, char* argv[]) {
         pending_allocations.clear();
         for (auto& pa : now_pending) {
             if (global_cycle >= pa.complete_cycle) {
-                if (debug_mode) {
-                    cout << "ALLOCATION COMPLETE: Core " << pa.core 
-                        << " Set " << pa.set << " Line " << pa.victim 
-                        << " Tag 0x" << hex << pa.tag << dec 
-                        << " State " << StateNames.at(pa.state) << endl;
-                    cout << "Before allocation: ";
-                    cache[pa.core].print_set_state(pa.core, pa.set);
-                    st[pa.core].waiting_for_own_request = false;
-                }
-
-                // Apply the allocation
                 Cache& C = cache[pa.core];
                 C.sets[pa.set][pa.victim].valid = true;
                 C.sets[pa.set][pa.victim].tag = pa.tag;
                 C.sets[pa.set][pa.victim].state = pa.state;
                 C.touch(pa.set, pa.victim);
-
-                if (debug_mode) {
-                    cout << "After allocation: ";
-                    cache[pa.core].print_set_state(pa.core, pa.set);
-                }
             } else {
-                if (debug_mode) {
-                    cout << "ALLOCATION PENDING: Core " << pa.core 
-                        << " Set " << pa.set << " Line " << pa.victim 
-                        << " Tag 0x" << hex << pa.tag << dec 
-                        << " State " << StateNames.at(pa.state) 
-                        << " Complete at cycle " << pa.complete_cycle << endl;
-                }
                 pending_allocations.push_back(pa);
             }
         }
@@ -240,18 +156,8 @@ int main(int argc, char* argv[]) {
             if (global_cycle < stall_until[c]) {
                 if (!st[c].waiting_for_own_request) {
                     st[c].idle++;
-                    if (debug_mode) {
-                        cout << "Core " << c << " is stalled due to another core's request until cycle " 
-                             << stall_until[c] << " (IDLE)" << endl;
-                        cout << "Idle Cycle Count for Core " << c << " is " << st[c].idle << endl;
-                    }
                 } else {
                     st[c].execution_cycles++;
-                    if (debug_mode) {
-                        cout << "Core " << c << " is waiting for its own request until cycle " 
-                             << stall_until[c] << " (EXECUTION)" << endl;
-                        cout << "Execution Cycle Count for Core " << c << " is " << st[c].execution_cycles << endl;
-                    }
                 }
                 continue;
             }
@@ -264,51 +170,22 @@ int main(int argc, char* argv[]) {
             Cache& C = cache[c];
             int idx = C.find_line(tag, set);
 
-            if (debug_mode) {
-                cout << "\nCORE " << c << " -> " << (isWrite ? "WRITE" : "READ") << " " 
-                     << format_addr(R.addr, s, b) << endl;
-                cout << "Cache lookup: Set " << set << ", Tag 0x" << hex << tag << dec 
-                     << ", Result: " << (idx >= 0 ? "HIT at index " + to_string(idx) : "MISS") << endl;
-                if (idx >= 0) {
-                    cout << "Line state: " << StateNames.at(C.sets[set][idx].state) << endl;
-                }
-                C.print_set_state(c, set);
-            }
-
             if (idx >= 0 && C.sets[set][idx].state != I) {
                 if (isWrite) {
-                    if (debug_mode) {
-                        cout << "WRITE HIT in Core " << c << " at cycle " << global_cycle 
-                             << " for instr " << st[c].instr << endl;
-                    }
-                    
                     if (C.sets[set][idx].state == M) {
-                        if (debug_mode) {
-                            cout << "State transition: M -> M (already modified)" << endl;
-                        }
                         planned_changes.push_back(
                             {c, set, idx, true, M, tag, C.use_counter++, global_cycle + 1, STATE_TRANSITION});
                     } else if (C.sets[set][idx].state == E) {
-                        if (debug_mode) {
-                            cout << "State transition: E -> M (modifying exclusive line)" << endl;
-                        }
                         planned_changes.push_back(
                             {c, set, idx, true, M, tag, C.use_counter++, global_cycle + 1, STATE_TRANSITION});
                     } else if (C.sets[set][idx].state == S) {
                         if (bus.free_at(global_cycle)) {
-                            if (debug_mode) {
-                                cout << "State transition: S -> M (modifying shared line)" << endl;
-                                cout << "Need to invalidate other copies..." << endl;
-                            }
                             bool invalidated_others = false;
                             
                             for (int o = 0; o < 4; o++) {
                                 if (o != c) {
                                     int oi = cache[o].find_line(tag, set);
                                     if (oi >= 0 && cache[o].sets[set][oi].state != I) {
-                                        if (debug_mode) {
-                                            cout << "Will invalidate copy in Core " << o << " index " << oi << endl;
-                                        }
                                         planned_changes.push_back({o, set, oi, false, I, cache[o].sets[set][oi].tag, 0, global_cycle + 1, INVALIDATION});
                                         invalidated_others = true;
                                     }
@@ -321,20 +198,11 @@ int main(int argc, char* argv[]) {
                             // Set this core's line to M state in the next cycle
                             planned_changes.push_back({c, set, idx, true, M, tag, C.use_counter++, global_cycle + 1, STATE_TRANSITION});
                         } else {
-                            if (debug_mode) {
-                                cout << "Bus busy, stalling Core " << c << " until cycle " 
-                                     << bus.busy_until << endl;
-                            }
                             stall_until[c] = bus.busy_until;
                             continue;
                         }
                     }
                 } else { // Read hit
-                    if (debug_mode) {
-                        cout << "READ HIT in Core " << c << " at cycle " << global_cycle 
-                             << " for instr " << st[c].instr << endl;
-                        cout << "State remains " << StateNames.at(C.sets[set][idx].state) << endl;
-                    }
                     planned_changes.push_back({c, set, idx, true,
                                                C.sets[set][idx].state, tag,
                                                C.use_counter++, global_cycle + 1, STATE_TRANSITION});
@@ -347,10 +215,6 @@ int main(int argc, char* argv[]) {
                     st[c].reads++;
             } else { // Cache miss
                 if (!bus.free_at(global_cycle)) {
-                    if (debug_mode) {
-                        cout << "Bus busy, stalling Core " << c << " until cycle " 
-                             << bus.busy_until << endl;
-                    }
                     stall_until[c] = bus.busy_until;
                     continue;
                 }
@@ -366,14 +230,7 @@ int main(int argc, char* argv[]) {
                 st[c].misses++;
                 bool isRdX = isWrite;
                 bool found_shared = false, found_mod = false;
-                
-                if (debug_mode) {
-                    cout << "CACHE MISS in Core " << c << " at cycle " << global_cycle 
-                         << " for instr " << st[c].instr << endl;
-                    cout << "Checking other cores for same block..." << endl;
-                }
-                
-                // Cache miss - check ALL cores (including those that just updated this cycle)
+
                 vector<pair<int, int>> other_copies;
                 
                 for (int o = 0; o < 4; o++) {
@@ -385,12 +242,6 @@ int main(int argc, char* argv[]) {
                             
                             if (cache[o].sets[set][oi].state == M) {
                                 found_mod = true;
-                                if (debug_mode) {
-                                    cout << "Core " << o << " has this block in M state" << endl;
-                                }
-                            } else if (debug_mode) {
-                                cout << "Core " << o << " has this block in " 
-                                     << StateNames.at(cache[o].sets[set][oi].state) << " state" << endl;
                             }
                         }
                     }
@@ -400,12 +251,6 @@ int main(int argc, char* argv[]) {
                 for (const auto& pc : planned_changes) {
                     if (pc.apply_cycle > global_cycle && pc.core != c && 
                         pc.set == set && pc.tag == tag && pc.valid && pc.state != I) {
-                        
-                        if (debug_mode) {
-                            cout << "Core " << pc.core << " is about to update this block to " 
-                                 << StateNames.at(pc.state) << " state" << endl;
-                        }
-                        
                         found_shared = true;
                         
                         // Check if this core already has the block (to avoid duplicates)
@@ -432,16 +277,9 @@ int main(int argc, char* argv[]) {
                 bool needs_invalidation = false;
                 
                 if (isRdX) { // Write miss
-                    if (debug_mode) {
-                        cout << "Processing WRITE MISS" << endl;
-                    }
                     new_state = State::M; 
                     
                     if (found_mod) {
-                        if (debug_mode) {
-                            cout << "Modified copy found in another core, requiring writeback" << endl;
-                            cout << "Data transfer duration: 200 cycles" << endl;
-                        }
                         data_transfer_cycles = 200;
                         
                         for (const auto& other : other_copies) {
@@ -450,48 +288,23 @@ int main(int argc, char* argv[]) {
                             
                             if (cache[o].sets[set][oi].state == M) {
                                 stall_requests.push_back({o, global_cycle + 101});
-                                if (debug_mode) {
-                                    cout << "Core " << o << " writes back modified data (" 
-                                         << (1u << b) << " bytes)" << endl;
-                                    cout << "Will invalidate copy in Core " << o << endl;
-                                    cout << "Adding stall request for Core " << o << " until cycle " << (global_cycle + 101) << endl;
-                                }
                                 st[o].traffic += (1u << b);
-                            } else if (debug_mode) {
-                                cout << "Will invalidate non-modified copy in Core " << o << endl;
                             }
                             
                             needs_invalidation = true;
                         }
                     } else {
-                        if (debug_mode) {
-                            cout << "No modified copy found, fetching from memory" << endl;
-                            cout << "Data transfer duration: 100 cycles" << endl;
-                        }
                         data_transfer_cycles = 101;
                         st[c].traffic += (1u << b);
                         
                         if (!other_copies.empty()) {
                             needs_invalidation = true;
-                            if (debug_mode) {
-                                cout << "Will invalidate " << other_copies.size() << " non-modified copies" << endl;
-                            }
                         }
                     }
                 } else { // Read miss
-                    if (debug_mode) {
-                        cout << "Processing READ MISS" << endl;
-                    }
-                    
                     if (found_shared) {
                         new_state = S;
                         data_transfer_cycles = 2 * block_words;
-                        if (debug_mode) {
-                            cout << "Valid copy found in another core" << endl;
-                            cout << "Data transfer duration: " << data_transfer_cycles << " cycles" << endl;
-                            cout << "New state will be S (Shared)" << endl;
-                        }
-                        
                         bool data_transferred = false;
                         for (const auto& other : other_copies) {
                             int o = other.first;
@@ -510,11 +323,6 @@ int main(int argc, char* argv[]) {
                             
                             // Handle data transfer from the first valid core
                             if (!data_transferred && cache[o].sets[set][oi].state != I) {
-                                if (debug_mode) {
-                                    cout << "Core " << o << " provides data (" 
-                                         << (1u << b) << " bytes)" << endl;
-                                }
-                                
                                 st[o].traffic += (1u << b);  // Data transfer traffic
                                 
                                 // Check if providing core has M state and handle writeback
@@ -523,30 +331,12 @@ int main(int argc, char* argv[]) {
                                     
                                     // Stall providing core for cache-to-cache transfer + writeback to memory
                                     stall_requests.push_back({o, global_cycle + 2 * block_words + 100});
-                                    
-                                    if (debug_mode) {
-                                        cout << "Core " << o << " has modified data, must write back to memory" << endl;
-                                        cout << "Additional writeback traffic: " << (1u << b) << " bytes" << endl;
-                                        cout << "Core " << o << " stalled for " << (2 * block_words + 100) 
-                                             << " cycles (transfer + writeback)" << endl;
-                                    }
                                 } else {
                                     // For non-modified states, just stall for the transfer time
                                     stall_requests.push_back({o, global_cycle + 2 * block_words});
-                                    
-                                    if (debug_mode) {
-                                        cout << "Core " << o << " stalled for " << (2 * block_words) 
-                                             << " cycles (transfer only)" << endl;
-                                    }
                                 }
                                 
                                 data_transferred = true;
-                            }
-                            
-                            // Update other cores' copies to S state
-                            if (debug_mode) {
-                                cout << "Changing state of copy in Core " << o 
-                                     << " to S (if not already)" << endl;
                             }
                             
                             planned_changes.push_back(
@@ -555,35 +345,20 @@ int main(int argc, char* argv[]) {
                                  cache[o].sets[set][oi].last_used,
                                  global_cycle + 1, STATE_TRANSITION});
                         }
-                        
-                        // Update data_transfer_cycles for the receiving core
-                        // In MESI protocol, read miss with shared copy only takes 2N cycles
-                        // (We don't wait for writeback to complete)
                         data_transfer_cycles = 2 * block_words;
                     } else {
                         new_state = State::E;
                         data_transfer_cycles = 101;  // 100 cycles for memory access + 1 cycle for state transition
                         st[c].traffic += (1u << b);
-                        if (debug_mode) {
-                            cout << "No valid copy found, fetching from memory" << endl;
-                            cout << "Data transfer duration: " << data_transfer_cycles << " cycles" << endl;
-                            cout << "New state will be E (Exclusive)" << endl;
-                        }
                     }
                 }
 
-                // Calculate total bus time
-                // uint64_t invalidation_cycles = needs_invalidation ? 1 : 0;
                 uint64_t total_bus_cycles = data_transfer_cycles;
                 
                 if (needs_invalidation) {
                     for (const auto& other : other_copies) {
                         int o = other.first;
                         int oi = other.second;
-                        if (debug_mode) {
-                            cout << "Scheduling invalidation for Core " << o << " at cycle " 
-                                 << (global_cycle + 1) << endl;
-                        }
                         planned_changes.push_back({o, set, oi, false, I, cache[o].sets[set][oi].tag,  0, global_cycle + 1, INVALIDATION});
                     }
                     st[c].invalidations++;
@@ -592,40 +367,18 @@ int main(int argc, char* argv[]) {
                 int v = C.choose_victim(set);
                 bool needs_writeback = false;
                 
-                if (debug_mode) {
-                    cout << "Victim selection: Line " << v;
-                    if (C.sets[set][v].valid) {
-                        cout << " (valid, tag 0x" << hex << C.sets[set][v].tag << dec 
-                             << ", state " << StateNames.at(C.sets[set][v].state) << ")";
-                    } else {
-                        cout << " (invalid)";
-                    }
-                    cout << endl;
-                }
-                
                 if (C.sets[set][v].valid) {
                     if (C.sets[set][v].state == M) {
                         needs_writeback = true;
                         st[c].writebacks++;
                         st[c].traffic += (1u << b);
                         total_bus_cycles += 100; // Additional 100 cycles for writeback
-                        if (debug_mode) {
-                            cout << "Victim is in M state, requires writeback" << endl;
-                            cout << "Writeback traffic: " << (1u << b) << " bytes" << endl;
-                            cout << "Additional writeback time: 100 cycles" << endl;
-                        }
                     }
                     if (C.sets[set][v].state != I)
                         st[c].evictions++;
                 }
 
                 uint64_t allocation_completion_cycle = global_cycle + total_bus_cycles;
-                
-                if (debug_mode) {
-                    cout << "Allocation will complete at cycle: " << allocation_completion_cycle << endl;
-                    cout << "Total bus occupation: " << total_bus_cycles << " cycles" << endl;
-                }
-
                 PendingAllocation pa;
                 pa.core = c;
                 pa.set = set;
@@ -638,18 +391,14 @@ int main(int argc, char* argv[]) {
                 
                 bus.occupy(global_cycle, total_bus_cycles);
                 stall_until[c] = bus.busy_until;
-                
-                if (debug_mode) {
-                    cout << "Core " << c << " stalled until cycle " << stall_until[c] << endl;
-                }
             }
         }
 
         for (const auto& req : stall_requests) {
-            stall_until[req.core] = max(stall_until[req.core], req.until_cycle);
-            if (debug_mode) {
-                cout << "Applied stall request: Core " << req.core << " stalled until cycle " 
-                     << req.until_cycle << endl;
+            if (global_cycle >= stall_until[req.core]) {
+                stall_until[req.core] = req.until_cycle;
+            } else {
+                stall_until[req.core] = max(stall_until[req.core], stall_until[req.core] + (req.until_cycle - global_cycle));
             }
         }
         stall_requests.clear();
@@ -659,12 +408,6 @@ int main(int argc, char* argv[]) {
 
     auto end_time = chrono::high_resolution_clock::now();
     chrono::duration<double> elapsed = end_time - start_time;
-
-    if (debug_mode) {
-        cout << "\n===== SIMULATION COMPLETED =====\n";
-        cout << "Total cycles: " << global_cycle << endl;
-    }
-
     ostream* out = &cout;
     if (!outfn.empty()) {
         static ofstream f(outfn);
