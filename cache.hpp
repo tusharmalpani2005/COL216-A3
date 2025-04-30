@@ -14,7 +14,8 @@ struct Cache {
 
     int find_line(uint32_t tag, int set) {
         for (int i = 0; i < A; i++) {
-            if (sets[set][i].valid && sets[set][i].tag == tag && sets[set][i].state != I) {
+            if (sets[set][i].valid && sets[set][i].tag == tag &&
+                sets[set][i].state != I) {
                 return i;
             }
         }
@@ -41,7 +42,7 @@ struct Cache {
         cout << "Cache[" << core << "] Set[" << set << "] State: ";
         for (int i = 0; i < A; i++) {
             if (sets[set][i].valid) {
-                cout << "[" << i << ":0x" << hex << sets[set][i].tag << dec 
+                cout << "[" << i << ":0x" << hex << sets[set][i].tag << dec
                      << "(" << StateNames.at(sets[set][i].state) << ")] ";
             } else {
                 cout << "[" << i << ":invalid] ";

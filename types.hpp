@@ -7,9 +7,7 @@
 using namespace std;
 
 // Map for state names to improve readability in debug output
-const map<int, string> StateNames = {
-    {0, "I"}, {1, "S"}, {2, "E"}, {3, "M"}
-};
+const map<int, string> StateNames = {{0, "I"}, {1, "S"}, {2, "E"}, {3, "M"}};
 
 enum State { I, S, E, M };
 

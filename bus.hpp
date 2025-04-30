@@ -1,7 +1,7 @@
 #ifndef BUS_HPP
 #define BUS_HPP
-#include <cstdint>
 #include <algorithm>
+#include <cstdint>
 
 using namespace std;
 
