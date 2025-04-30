@@ -6,10 +6,10 @@
 using namespace std;
 
 struct Bus {
-    uint64_t busy_until;
+    unsigned long long busy_until;
     Bus() : busy_until(0) {}
-    bool free_at(uint64_t cycle) { return cycle >= busy_until; }
-    void occupy(uint64_t cycle, uint64_t duration) {
+    bool free_at(unsigned long long cycle) { return cycle >= busy_until; }
+    void occupy(unsigned long long cycle, unsigned long long duration) {
         busy_until = max(busy_until, cycle) + duration;
     }
 };

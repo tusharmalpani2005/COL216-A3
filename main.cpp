@@ -15,20 +15,20 @@
 using namespace std;
 
 struct Stats {
-    uint64_t instr = 0, reads = 0, writes = 0;
-    uint64_t execution_cycles = 0, idle = 0;
-    uint64_t misses = 0, evictions = 0, writebacks = 0;
-    uint64_t invalidations = 0, traffic = 0;
+    unsigned long long instr = 0, reads = 0, writes = 0;
+    unsigned long long execution_cycles = 0, idle = 0;
+    unsigned long long misses = 0, evictions = 0, writebacks = 0;
+    unsigned long long invalidations = 0, traffic = 0;
     bool waiting_for_own_request = false;
 };
 
-struct Ref {
+  struct Ref {
     char type;
-    uint32_t addr;
+    unsigned int addr;
 };
 
 // Function to format address for debug output
-string format_addr(uint32_t addr, int s, int b) {
+string format_addr(unsigned int addr, int s, int b) {
     stringstream ss;
     ss << "0x" << hex << addr << " (tag:0x" << (addr >> (s + b))
        << ", set:" << dec << ((addr >> b) & ((1u << s) - 1))
@@ -60,7 +60,6 @@ int main(int argc, char* argv[]) {
             cout << "-E <E>: associativity\n";
             cout << "-b <b>: number of block bits\n";
             cout << "-o <outfilename>: logs output\n";
-            cout << "-d: enable detailed debugging\n";
             cout << "-h: prints this help\n";
             return 0;
         }
@@ -80,7 +79,7 @@ int main(int argc, char* argv[]) {
         char t;
         string addr;
         while (f >> t >> addr) {
-            uint32_t a = stoul(addr, nullptr, 0);
+            unsigned int a = stoul(addr, nullptr, 0);
             refq[c].push_back({t, a});
         }
     }
@@ -88,14 +87,14 @@ int main(int argc, char* argv[]) {
     vector<Cache> cache(4, Cache(s, E, b));
     Bus bus;
     vector<Stats> st(4);
-    vector<uint64_t> stall_until(4, 0);
-    uint64_t global_cycle = 0;
+    vector<unsigned long long> stall_until(4, 0);
+    unsigned long long global_cycle = 0;
     vector<PendingAllocation> pending_allocations;
     vector<PlannedChange> planned_changes;
     vector<StallRequest> stall_requests;
 
-    auto get_set = [&](uint32_t addr) { return (addr >> b) & ((1u << s) - 1); };
-    auto get_tag = [&](uint32_t addr) { return addr >> (s + b); };
+    auto get_set = [&](unsigned int addr) { return (addr >> b) & ((1u << s) - 1); };
+    auto get_tag = [&](unsigned int addr) { return addr >> (s + b); };
     auto block_words = (1u << b) / 4u;
 
     auto start_time = chrono::high_resolution_clock::now();
@@ -165,7 +164,7 @@ int main(int argc, char* argv[]) {
             st[c].execution_cycles++;
             
             Ref R = refq[c].front();
-            uint32_t set = get_set(R.addr), tag = get_tag(R.addr);
+            unsigned int set = get_set(R.addr), tag = get_tag(R.addr);
             bool isWrite = (R.type == 'W');
             Cache& C = cache[c];
             int idx = C.find_line(tag, set);
@@ -273,7 +272,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 State new_state;
-                uint64_t data_transfer_cycles;
+                unsigned long long data_transfer_cycles;
                 bool needs_invalidation = false;
                 
                 if (isRdX) { // Write miss
@@ -353,7 +352,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                uint64_t total_bus_cycles = data_transfer_cycles;
+                unsigned long long total_bus_cycles = data_transfer_cycles;
                 
                 if (needs_invalidation) {
                     for (const auto& other : other_copies) {
@@ -378,7 +377,7 @@ int main(int argc, char* argv[]) {
                         st[c].evictions++;
                 }
 
-                uint64_t allocation_completion_cycle = global_cycle + total_bus_cycles;
+                unsigned long long allocation_completion_cycle = global_cycle + total_bus_cycles;
                 PendingAllocation pa;
                 pa.core = c;
                 pa.set = set;
@@ -431,7 +430,7 @@ int main(int argc, char* argv[]) {
     *out << "Replacement Policy: LRU\n";
     *out << "Bus: Central snooping bus\n\n";
 
-    uint64_t total_bus_tx = 0, total_bus_traffic = 0;
+    unsigned long long total_bus_tx = 0, total_bus_traffic = 0;
     for (int c = 0; c < 4; c++) {
         double miss_rate =
             st[c].misses / double(st[c].instr) * 100.0;
